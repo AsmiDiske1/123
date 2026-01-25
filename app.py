@@ -270,16 +270,23 @@ class RecordDialog(tk.Toplevel):
 
         self._add_field(frame, "Сотрудник / группа", self.person_var, 0)
         self._add_field(frame, "Название", self.item_var, 1)
-        self._add_field(frame, "Категория", self.category_var, 2)
+        ttk.Label(frame, text="Категория").grid(row=4, column=0, sticky=tk.W)
+        category_combo = ttk.Combobox(
+            frame,
+            textvariable=self.category_var,
+            values=("Прививка", "Исследование", "Медосмотр", "Другое"),
+            width=38,
+        )
+        category_combo.grid(row=5, column=0, columnspan=2, sticky=tk.W)
         self._add_field(frame, "Срок до (ГГГГ-ММ-ДД)", self.date_var, 3)
 
         notes_label = ttk.Label(frame, text="Примечание")
-        notes_label.grid(row=4, column=0, sticky=tk.W, pady=(6, 0))
+        notes_label.grid(row=6, column=0, sticky=tk.W, pady=(6, 0))
         notes_entry = ttk.Entry(frame, textvariable=self.notes_var, width=40)
-        notes_entry.grid(row=5, column=0, columnspan=2, sticky=tk.W)
+        notes_entry.grid(row=7, column=0, columnspan=2, sticky=tk.W)
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
+        button_frame.grid(row=8, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
 
         ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
             side=tk.RIGHT, padx=(6, 0)
