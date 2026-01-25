@@ -303,16 +303,26 @@ class RecordDialog(tk.Toplevel):
             due_date=self.date_var.get().strip(),
             notes=self.notes_var.get().strip(),
         )
-        if not payload.person or not payload.item or not payload.category:
+        missing_fields = []
+        if not payload.person:
+            missing_fields.append("сотрудник/группа")
+        if not payload.item:
+            missing_fields.append("название")
+        if not payload.category:
+            missing_fields.append("категория")
+        if not payload.due_date:
+            missing_fields.append("срок")
+        if missing_fields:
             messagebox.showwarning(
-                "Проверка", "Заполните сотрудника/группу, название и категорию."
+                "Проверка",
+                "Заполните поля: " + ", ".join(missing_fields) + ".",
             )
             return
-        try:
-            parsed_date = datetime.strptime(payload.due_date, "%Y-%m-%d").date()
-        except ValueError:
+        parsed_date = self._parse_date(payload.due_date)
+        if parsed_date is None:
             messagebox.showwarning(
-                "Проверка", "Введите дату в формате ГГГГ-ММ-ДД."
+                "Проверка",
+                "Введите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
             )
             return
         if parsed_date.year < 2000 or parsed_date.year > 2100:
@@ -322,6 +332,15 @@ class RecordDialog(tk.Toplevel):
             return
         self.on_submit(payload)
         self.destroy()
+
+    @staticmethod
+    def _parse_date(value: str) -> date | None:
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+        return None
 
 
 if __name__ == "__main__":
