@@ -60,12 +60,6 @@ class EpidemiologistTracker(tk.Tk):
         button_frame = ttk.Frame(self)
         button_frame.pack(fill=tk.X, padx=12, pady=4)
 
-        ttk.Button(button_frame, text="Добавить", command=self._open_add_dialog).pack(
-            side=tk.LEFT, padx=(0, 6)
-        )
-        ttk.Button(button_frame, text="Изменить", command=self._open_edit_dialog).pack(
-            side=tk.LEFT, padx=(0, 6)
-        )
         ttk.Button(button_frame, text="Удалить", command=self._delete_record).pack(
             side=tk.LEFT, padx=(0, 6)
         )
@@ -86,7 +80,7 @@ class EpidemiologistTracker(tk.Tk):
             show="headings",
             height=18,
         )
-        self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 12))
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
 
         self.tree.heading("person", text="Сотрудник / группа")
         self.tree.heading("item", text="Название")
@@ -105,6 +99,52 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.tag_configure("overdue", background="#f8d7da")
         self.tree.tag_configure("due_soon", background="#fff3cd")
         self.tree.tag_configure("ok", background="#e7f5ff")
+
+        form_frame = ttk.LabelFrame(self, text="Новая запись", padding=12)
+        form_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        self.person_var = tk.StringVar()
+        self.item_var = tk.StringVar()
+        self.category_var = tk.StringVar()
+        self.date_var = tk.StringVar()
+        self.notes_var = tk.StringVar()
+
+        ttk.Label(form_frame, text="Сотрудник / группа").grid(
+            row=0, column=0, sticky=tk.W
+        )
+        ttk.Entry(form_frame, textvariable=self.person_var, width=28).grid(
+            row=1, column=0, padx=(0, 12), sticky=tk.W
+        )
+
+        ttk.Label(form_frame, text="Название").grid(row=0, column=1, sticky=tk.W)
+        ttk.Entry(form_frame, textvariable=self.item_var, width=28).grid(
+            row=1, column=1, padx=(0, 12), sticky=tk.W
+        )
+
+        ttk.Label(form_frame, text="Категория").grid(row=0, column=2, sticky=tk.W)
+        category_combo = ttk.Combobox(
+            form_frame,
+            textvariable=self.category_var,
+            values=("Прививка", "Исследование", "Медосмотр", "Другое"),
+            width=24,
+        )
+        category_combo.grid(row=1, column=2, padx=(0, 12), sticky=tk.W)
+
+        ttk.Label(form_frame, text="Срок (ГГГГ-ММ-ДД)").grid(
+            row=0, column=3, sticky=tk.W
+        )
+        ttk.Entry(form_frame, textvariable=self.date_var, width=18).grid(
+            row=1, column=3, padx=(0, 12), sticky=tk.W
+        )
+
+        ttk.Label(form_frame, text="Примечание").grid(row=0, column=4, sticky=tk.W)
+        ttk.Entry(form_frame, textvariable=self.notes_var, width=30).grid(
+            row=1, column=4, sticky=tk.W
+        )
+
+        ttk.Button(form_frame, text="Добавить", command=self._handle_add).grid(
+            row=1, column=5, padx=(12, 0), sticky=tk.W
+        )
 
     def _load_records(self) -> None:
         for row in self.tree.get_children():
@@ -146,35 +186,61 @@ class EpidemiologistTracker(tk.Tk):
             return f"Скоро истекает ({DUE_SOON_DAYS} дн.)", "due_soon"
         return "В норме", "ok"
 
-    def _open_add_dialog(self) -> None:
-        RecordDialog(self, "Добавить запись", self._insert_record)
+    def _handle_add(self) -> None:
+        payload = RecordInput(
+            person=self.person_var.get().strip(),
+            item=self.item_var.get().strip(),
+            category=self.category_var.get().strip(),
+            due_date=self.date_var.get().strip(),
+            notes=self.notes_var.get().strip(),
+        )
+        if not self._validate_payload(payload):
+            return
+        self._insert_record(payload)
+        self.person_var.set("")
+        self.item_var.set("")
+        self.category_var.set("")
+        self.date_var.set("")
+        self.notes_var.set("")
 
-    def _open_edit_dialog(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
-            messagebox.showinfo("Выбор записи", "Выберите запись для изменения.")
-            return
-        record_id = int(selection[0])
-        cursor = self.connection.execute(
-            "SELECT person, item, category, due_date, notes FROM records WHERE id = ?",
-            (record_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            messagebox.showerror("Ошибка", "Запись не найдена.")
-            return
-        RecordDialog(
-            self,
-            "Изменить запись",
-            lambda payload: self._update_record(record_id, payload),
-            initial=RecordInput(
-                person=row[0],
-                item=row[1],
-                category=row[2],
-                due_date=row[3],
-                notes=row[4] or "",
-            ),
-        )
+    @staticmethod
+    def _parse_date(value: str) -> date | None:
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _validate_payload(self, payload: "RecordInput") -> bool:
+        missing_fields = []
+        if not payload.person:
+            missing_fields.append("сотрудник/группа")
+        if not payload.item:
+            missing_fields.append("название")
+        if not payload.category:
+            missing_fields.append("категория")
+        if not payload.due_date:
+            missing_fields.append("срок")
+        if missing_fields:
+            messagebox.showwarning(
+                "Проверка",
+                "Заполните поля: " + ", ".join(missing_fields) + ".",
+            )
+            return False
+        parsed_date = self._parse_date(payload.due_date)
+        if parsed_date is None:
+            messagebox.showwarning(
+                "Проверка",
+                "Введите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
+            )
+            return False
+        if parsed_date.year < 2000 or parsed_date.year > 2100:
+            messagebox.showwarning(
+                "Проверка", "Проверьте год даты срока действия."
+            )
+            return False
+        return True
 
     def _insert_record(self, payload: "RecordInput") -> None:
         with self.connection:
@@ -238,116 +304,6 @@ class RecordInput:
     category: str
     due_date: str
     notes: str
-
-
-class RecordDialog(tk.Toplevel):
-    def __init__(
-        self,
-        parent: tk.Tk,
-        title: str,
-        on_submit: callable,
-        initial: RecordInput | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.title(title)
-        self.resizable(False, False)
-        self.on_submit = on_submit
-        self.initial = initial or RecordInput("", "", "", "", "")
-
-        self._build_form()
-        self.grab_set()
-        self.transient(parent)
-
-    def _build_form(self) -> None:
-        frame = ttk.Frame(self, padding=12)
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        self.person_var = tk.StringVar(value=self.initial.person)
-        self.item_var = tk.StringVar(value=self.initial.item)
-        self.category_var = tk.StringVar(value=self.initial.category)
-        self.date_var = tk.StringVar(value=self.initial.due_date)
-        self.notes_var = tk.StringVar(value=self.initial.notes)
-
-        self._add_field(frame, "Сотрудник / группа", self.person_var, 0)
-        self._add_field(frame, "Название", self.item_var, 1)
-        ttk.Label(frame, text="Категория").grid(row=4, column=0, sticky=tk.W)
-        category_combo = ttk.Combobox(
-            frame,
-            textvariable=self.category_var,
-            values=("Прививка", "Исследование", "Медосмотр", "Другое"),
-            width=38,
-        )
-        category_combo.grid(row=5, column=0, columnspan=2, sticky=tk.W)
-        self._add_field(frame, "Срок (ГГГГ-ММ-ДД)", self.date_var, 3)
-
-        notes_label = ttk.Label(frame, text="Примечание")
-        notes_label.grid(row=6, column=0, sticky=tk.W, pady=(6, 0))
-        notes_entry = ttk.Entry(frame, textvariable=self.notes_var, width=40)
-        notes_entry.grid(row=7, column=0, columnspan=2, sticky=tk.W)
-
-        button_frame = ttk.Frame(frame)
-        button_frame.grid(row=8, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
-
-        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
-            side=tk.RIGHT, padx=(6, 0)
-        )
-        ttk.Button(button_frame, text="Сохранить", command=self._handle_submit).pack(
-            side=tk.RIGHT
-        )
-
-    def _add_field(
-        self, frame: ttk.Frame, label: str, variable: tk.StringVar, row: int
-    ) -> None:
-        ttk.Label(frame, text=label).grid(row=row * 2, column=0, sticky=tk.W)
-        entry = ttk.Entry(frame, textvariable=variable, width=40)
-        entry.grid(row=row * 2 + 1, column=0, columnspan=2, sticky=tk.W)
-
-    def _handle_submit(self) -> None:
-        payload = RecordInput(
-            person=self.person_var.get().strip(),
-            item=self.item_var.get().strip(),
-            category=self.category_var.get().strip(),
-            due_date=self.date_var.get().strip(),
-            notes=self.notes_var.get().strip(),
-        )
-        missing_fields = []
-        if not payload.person:
-            missing_fields.append("сотрудник/группа")
-        if not payload.item:
-            missing_fields.append("название")
-        if not payload.category:
-            missing_fields.append("категория")
-        if not payload.due_date:
-            missing_fields.append("срок")
-        if missing_fields:
-            messagebox.showwarning(
-                "Проверка",
-                "Заполните поля: " + ", ".join(missing_fields) + ".",
-            )
-            return
-        parsed_date = self._parse_date(payload.due_date)
-        if parsed_date is None:
-            messagebox.showwarning(
-                "Проверка",
-                "Введите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
-            )
-            return
-        if parsed_date.year < 2000 or parsed_date.year > 2100:
-            messagebox.showwarning(
-                "Проверка", "Проверьте год даты срока действия."
-            )
-            return
-        self.on_submit(payload)
-        self.destroy()
-
-    @staticmethod
-    def _parse_date(value: str) -> date | None:
-        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(value, fmt).date()
-            except ValueError:
-                continue
-        return None
 
 
 if __name__ == "__main__":
