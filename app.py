@@ -176,6 +176,7 @@ class EpidemiologistTracker(tk.Tk):
             height=18,
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
+        self.tree.bind("<Button-1>", self._handle_tree_click, add="+")
 
         self.tree.heading(
             "#0",
@@ -342,6 +343,10 @@ class EpidemiologistTracker(tk.Tk):
     def _toggle_person_sort(self) -> None:
         self._sort_ascending = not self._sort_ascending
         self._load_records()
+
+    def _handle_tree_click(self, event: tk.Event) -> None:
+        if not self.tree.identify_row(event.y):
+            self.tree.selection_remove(self.tree.selection())
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
