@@ -19,6 +19,22 @@ CATEGORY_OPTIONS = (
     "Медосмотр",
     "Другое",
 )
+MEDBOOK_ITEMS = [
+    ("Прививка", "Корь"),
+    ("Прививка", "Краснуха"),
+    ("Прививка", "Паротит"),
+    ("Прививка", "Дифтерия и столбняк"),
+    ("Прививка", "Грипп"),
+    ("Прививка", "Гепатит B"),
+    ("Исследование", "ФЛГ (флюорография)"),
+    ("Исследование", "RW (сифилис)"),
+    ("Исследование", "ВИЧ"),
+    ("Исследование", "HBsAg (гепатит B)"),
+    ("Исследование", "Anti-HCV (гепатит C)"),
+    ("Исследование", "Мазок на стафилококк"),
+    ("Исследование", "Кишечные инфекции"),
+    ("Исследование", "Гельминты/яйца глист"),
+]
 
 
 def clamp_date(day: int, month: int, year: int) -> tuple[int, int, int]:
@@ -243,6 +259,7 @@ class EpidemiologistTracker(tk.Tk):
             """
         )
         person_nodes: dict[str, str] = {}
+        records_by_person: dict[str, list[Record]] = {}
         for row in cursor.fetchall():
             record = Record(
                 record_id=row[0],
@@ -252,32 +269,75 @@ class EpidemiologistTracker(tk.Tk):
                 due_date=date.fromisoformat(row[4]),
                 notes=row[5] or "",
             )
-            status_label, tag = self._status_for(record.due_date)
-            if record.person not in person_nodes:
-                parent_id = f"person:{record.person}"
-                person_nodes[record.person] = parent_id
-                self.tree.insert(
-                    "",
-                    tk.END,
-                    iid=parent_id,
-                    text=record.person,
-                    values=("", "", "", "", ""),
-                )
+            records_by_person.setdefault(record.person, []).append(record)
+
+        for person, records in records_by_person.items():
+            parent_id = f"person:{person}"
+            person_nodes[person] = parent_id
             self.tree.insert(
-                person_nodes[record.person],
+                "",
                 tk.END,
-                iid=f"record:{record.record_id}",
-                text="",
-                values=(
-                    record.item,
-                    record.category,
-                    record.due_date.strftime("%d.%m.%Y"),
-                    status_label,
-                    record.notes,
-                ),
-                tags=(tag,),
+                iid=parent_id,
+                text=person,
+                values=("", "", "", "", ""),
             )
-            self.tree.item(person_nodes[record.person], open=True)
+
+            latest_by_item: dict[str, Record] = {}
+            for record in records:
+                existing = latest_by_item.get(record.item)
+                if existing is None or record.due_date > existing.due_date:
+                    latest_by_item[record.item] = record
+
+            required_items = {item for _, item in MEDBOOK_ITEMS}
+            extra_items = [record.item for record in records if record.item not in required_items]
+
+            for category, item_name in MEDBOOK_ITEMS:
+                record = latest_by_item.get(item_name)
+                if record:
+                    status_label, tag = self._status_for(record.due_date)
+                    due_date_text = record.due_date.strftime("%d.%m.%Y")
+                    notes = record.notes or "-"
+                    iid = f"record:{record.record_id}"
+                else:
+                    status_label = "-"
+                    tag = ""
+                    due_date_text = "-"
+                    notes = "-"
+                    iid = f"missing:{person}:{item_name}"
+                self.tree.insert(
+                    parent_id,
+                    tk.END,
+                    iid=iid,
+                    text="",
+                    values=(
+                        item_name,
+                        category,
+                        due_date_text,
+                        status_label,
+                        notes,
+                    ),
+                    tags=(tag,) if tag else (),
+                )
+
+            for item_name in sorted(set(extra_items)):
+                record = latest_by_item[item_name]
+                status_label, tag = self._status_for(record.due_date)
+                self.tree.insert(
+                    parent_id,
+                    tk.END,
+                    iid=f"record:{record.record_id}",
+                    text="",
+                    values=(
+                        item_name,
+                        record.category,
+                        record.due_date.strftime("%d.%m.%Y"),
+                        status_label,
+                        record.notes or "-",
+                    ),
+                    tags=(tag,),
+                )
+
+            self.tree.item(parent_id, open=True)
 
     def _toggle_person_sort(self) -> None:
         self._sort_ascending = not self._sort_ascending
