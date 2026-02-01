@@ -36,6 +36,7 @@ class EpidemiologistTracker(tk.Tk):
         self.connection = sqlite3.connect(DB_PATH)
         self._init_db()
 
+        self._sort_ascending = True
         self._build_ui()
         self._load_records()
 
@@ -81,19 +82,19 @@ class EpidemiologistTracker(tk.Tk):
         )
         legend.pack(side=tk.RIGHT)
 
-        columns = ("person", "item", "category", "due_date", "status", "notes")
+        columns = ("item", "category", "due_date", "status", "notes")
         self.tree = ttk.Treeview(
             self,
             columns=columns,
-            show="headings",
+            show="tree headings",
             height=18,
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
 
         self.tree.heading(
-            "person",
+            "#0",
             text="Сотрудник / группа",
-            command=lambda: self._sort_tree("person", False),
+            command=self._toggle_person_sort,
         )
         self.tree.heading("item", text="Название")
         self.tree.heading("category", text="Категория")
@@ -101,7 +102,7 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.heading("status", text="Статус")
         self.tree.heading("notes", text="Примечание")
 
-        self.tree.column("person", width=160)
+        self.tree.column("#0", width=180)
         self.tree.column("item", width=200)
         self.tree.column("category", width=140)
         self.tree.column("due_date", width=100, anchor=tk.CENTER)
@@ -163,9 +164,15 @@ class EpidemiologistTracker(tk.Tk):
         for row in self.tree.get_children():
             self.tree.delete(row)
 
+        order = "ASC" if self._sort_ascending else "DESC"
         cursor = self.connection.execute(
-            "SELECT id, person, item, category, due_date, notes FROM records"
+            f"""
+            SELECT id, person, item, category, due_date, notes
+            FROM records
+            ORDER BY person {order}, item ASC
+            """
         )
+        person_nodes: dict[str, str] = {}
         for row in cursor.fetchall():
             record = Record(
                 record_id=row[0],
@@ -176,12 +183,22 @@ class EpidemiologistTracker(tk.Tk):
                 notes=row[5] or "",
             )
             status_label, tag = self._status_for(record.due_date)
+            if record.person not in person_nodes:
+                parent_id = f"person:{record.person}"
+                person_nodes[record.person] = parent_id
+                self.tree.insert(
+                    "",
+                    tk.END,
+                    iid=parent_id,
+                    text=record.person,
+                    values=("", "", "", "", ""),
+                )
             self.tree.insert(
-                "",
+                person_nodes[record.person],
                 tk.END,
-                iid=str(record.record_id),
+                iid=f"record:{record.record_id}",
+                text="",
                 values=(
-                    record.person,
                     record.item,
                     record.category,
                     record.due_date.strftime("%d.%m.%Y"),
@@ -190,16 +207,11 @@ class EpidemiologistTracker(tk.Tk):
                 ),
                 tags=(tag,),
             )
+            self.tree.item(person_nodes[record.person], open=True)
 
-    def _sort_tree(self, col: str, reverse: bool) -> None:
-        items = [(self.tree.set(item, col), item) for item in self.tree.get_children("")]
-        items.sort(key=lambda pair: pair[0].lower(), reverse=reverse)
-        for index, (_, item) in enumerate(items):
-            self.tree.move(item, "", index)
-        self.tree.heading(
-            col,
-            command=lambda: self._sort_tree(col, not reverse),
-        )
+    def _toggle_person_sort(self) -> None:
+        self._sort_ascending = not self._sort_ascending
+        self._load_records()
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
@@ -285,11 +297,10 @@ class EpidemiologistTracker(tk.Tk):
         self._load_records()
 
     def _open_edit_dialog(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
+        record_id = self._selected_record_id()
+        if record_id is None:
             messagebox.showinfo("Выбор записи", "Выберите запись для изменения.")
             return
-        record_id = int(selection[0])
         cursor = self.connection.execute(
             "SELECT person, item, category, due_date, notes FROM records WHERE id = ?",
             (record_id,),
@@ -331,11 +342,10 @@ class EpidemiologistTracker(tk.Tk):
         self._load_records()
 
     def _delete_record(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
+        record_id = self._selected_record_id()
+        if record_id is None:
             messagebox.showinfo("Выбор записи", "Выберите запись для удаления.")
             return
-        record_id = int(selection[0])
         if not messagebox.askyesno(
             "Подтверждение", "Удалить выбранную запись?"
         ):
@@ -343,6 +353,17 @@ class EpidemiologistTracker(tk.Tk):
         with self.connection:
             self.connection.execute("DELETE FROM records WHERE id = ?", (record_id,))
         self._load_records()
+
+    def _selected_record_id(self) -> int | None:
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        selected = selection[0]
+        if selected.startswith("person:"):
+            return None
+        if selected.startswith("record:"):
+            return int(selected.split("record:", 1)[1])
+        return None
 
     def destroy(self) -> None:
         self.connection.close()
