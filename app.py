@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import subprocess
+import sys
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -14,6 +17,23 @@ CATEGORY_OPTIONS = (
     "Медосмотр",
     "Другое",
 )
+
+
+def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
+    placeholder = "ДД.ММ.ГГГГ"
+    if not variable.get():
+        variable.set(placeholder)
+
+    def on_focus_in(_: tk.Event) -> None:
+        if variable.get() == placeholder:
+            variable.set("")
+
+    def on_focus_out(_: tk.Event) -> None:
+        if not variable.get().strip():
+            variable.set(placeholder)
+
+    entry.bind("<FocusIn>", on_focus_in)
+    entry.bind("<FocusOut>", on_focus_out)
 
 
 @dataclass
@@ -147,9 +167,9 @@ class EpidemiologistTracker(tk.Tk):
         ttk.Label(form_frame, text="Срок (ДД.ММ.ГГГГ)").grid(
             row=0, column=3, sticky=tk.W
         )
-        ttk.Entry(form_frame, textvariable=self.date_var, width=18).grid(
-            row=1, column=3, padx=(0, 12), sticky=tk.W
-        )
+        date_entry = ttk.Entry(form_frame, textvariable=self.date_var, width=18)
+        date_entry.grid(row=1, column=3, padx=(0, 12), sticky=tk.W)
+        attach_date_placeholder(date_entry, self.date_var)
 
         ttk.Label(form_frame, text="Примечание").grid(row=0, column=4, sticky=tk.W)
         ttk.Entry(form_frame, textvariable=self.notes_var, width=30).grid(
@@ -423,9 +443,9 @@ class EditDialog(tk.Toplevel):
         category_combo.grid(row=5, column=0, columnspan=2, sticky=tk.W)
 
         ttk.Label(frame, text="Срок (ДД.ММ.ГГГГ)").grid(row=6, column=0, sticky=tk.W)
-        ttk.Entry(frame, textvariable=self.date_var, width=20).grid(
-            row=7, column=0, sticky=tk.W
-        )
+        date_entry = ttk.Entry(frame, textvariable=self.date_var, width=20)
+        date_entry.grid(row=7, column=0, sticky=tk.W)
+        attach_date_placeholder(date_entry, self.date_var)
 
         ttk.Label(frame, text="Примечание").grid(row=8, column=0, sticky=tk.W)
         ttk.Entry(frame, textvariable=self.notes_var, width=40).grid(
@@ -459,5 +479,10 @@ class EditDialog(tk.Toplevel):
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32" and sys.executable.lower().endswith("python.exe"):
+        pythonw = sys.executable[:-10] + "pythonw.exe"
+        if os.path.exists(pythonw):
+            subprocess.Popen([pythonw, __file__, *sys.argv[1:]])
+            raise SystemExit(0)
     app = EpidemiologistTracker()
     app.mainloop()
