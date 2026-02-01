@@ -1,3 +1,5 @@
+import calendar
+import ctypes
 import os
 import sqlite3
 import subprocess
@@ -19,6 +21,25 @@ CATEGORY_OPTIONS = (
 )
 
 
+def clamp_date(day: int, month: int, year: int) -> tuple[int, int, int]:
+    month = max(1, min(month, 12))
+    year = max(1, year)
+    last_day = calendar.monthrange(year, month)[1]
+    day = max(1, min(day, last_day))
+    return day, month, year
+
+
+def normalize_date_value(value: str) -> str | None:
+    digits = "".join(char for char in value if char.isdigit())
+    if len(digits) != 8:
+        return None
+    day = int(digits[:2])
+    month = int(digits[2:4])
+    year = int(digits[4:])
+    day, month, year = clamp_date(day, month, year)
+    return f"{day:02d}.{month:02d}.{year:04d}"
+
+
 def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
     placeholder = "ДД.ММ.ГГГГ"
     if not variable.get():
@@ -29,9 +50,37 @@ def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
             variable.set("")
 
     def on_focus_out(_: tk.Event) -> None:
-        if not variable.get().strip():
+        current = variable.get().strip()
+        if not current:
             variable.set(placeholder)
+            return
+        normalized = normalize_date_value(current)
+        if normalized:
+            variable.set(normalized)
 
+    def on_text_change(*_: object) -> None:
+        value = variable.get()
+        if value == placeholder:
+            return
+        digits = "".join(char for char in value if char.isdigit())
+        if len(digits) > 8:
+            digits = digits[:8]
+        parts = []
+        if len(digits) >= 2:
+            parts.append(digits[:2])
+        elif digits:
+            parts.append(digits)
+        if len(digits) >= 4:
+            parts.append(digits[2:4])
+        elif len(digits) > 2:
+            parts.append(digits[2:])
+        if len(digits) > 4:
+            parts.append(digits[4:])
+        formatted = ".".join(parts)
+        if formatted != value:
+            variable.set(formatted)
+
+    variable.trace_add("write", on_text_change)
     entry.bind("<FocusIn>", on_focus_in)
     entry.bind("<FocusOut>", on_focus_out)
 
@@ -277,7 +326,7 @@ class EpidemiologistTracker(tk.Tk):
             missing_fields.append("название")
         if not payload.category:
             missing_fields.append("категория")
-        if not payload.due_date:
+        if not payload.due_date or payload.due_date == "ДД.ММ.ГГГГ":
             missing_fields.append("срок")
         if missing_fields:
             messagebox.showwarning(
@@ -285,6 +334,8 @@ class EpidemiologistTracker(tk.Tk):
                 "Заполните поля: " + ", ".join(missing_fields) + ".",
             )
             return None
+        normalized = normalize_date_value(payload.due_date) or payload.due_date
+        payload.due_date = normalized
         parsed_date = self._parse_date(payload.due_date)
         if parsed_date is None:
             messagebox.showwarning(
@@ -479,6 +530,10 @@ class EditDialog(tk.Toplevel):
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        console_window = ctypes.windll.kernel32.GetConsoleWindow()
+        if console_window:
+            ctypes.windll.user32.ShowWindow(console_window, 0)
     if sys.platform == "win32" and sys.executable.lower().endswith("python.exe"):
         pythonw = sys.executable[:-10] + "pythonw.exe"
         if os.path.exists(pythonw):
