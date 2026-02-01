@@ -155,6 +155,9 @@ class EpidemiologistTracker(tk.Tk):
         button_frame = ttk.Frame(self)
         button_frame.pack(fill=tk.X, padx=12, pady=4)
 
+        ttk.Button(button_frame, text="Добавить", command=self._open_add_dialog).pack(
+            side=tk.LEFT, padx=(0, 6)
+        )
         ttk.Button(button_frame, text="Изменить", command=self._open_edit_dialog).pack(
             side=tk.LEFT, padx=(0, 6)
         )
@@ -200,52 +203,14 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.tag_configure("due_soon", background="#fff3cd")
         self.tree.tag_configure("ok", background="#e7f5ff")
 
-        form_frame = ttk.LabelFrame(self, text="Новая запись", padding=12)
-        form_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+        self._build_empty_state()
 
-        self.person_var = tk.StringVar()
-        self.item_var = tk.StringVar()
-        self.category_var = tk.StringVar(value=DEFAULT_CATEGORY)
-        self.date_var = tk.StringVar()
-        self.notes_var = tk.StringVar()
-
-        ttk.Label(form_frame, text="Сотрудник / группа").grid(
-            row=0, column=0, sticky=tk.W
-        )
-        ttk.Entry(form_frame, textvariable=self.person_var, width=28).grid(
-            row=1, column=0, padx=(0, 12), sticky=tk.W
-        )
-
-        ttk.Label(form_frame, text="Название").grid(row=0, column=1, sticky=tk.W)
-        ttk.Entry(form_frame, textvariable=self.item_var, width=28).grid(
-            row=1, column=1, padx=(0, 12), sticky=tk.W
-        )
-
-        ttk.Label(form_frame, text="Категория").grid(row=0, column=2, sticky=tk.W)
-        category_combo = ttk.Combobox(
-            form_frame,
-            textvariable=self.category_var,
-            values=CATEGORY_OPTIONS,
-            width=24,
-            state="readonly",
-        )
-        category_combo.grid(row=1, column=2, padx=(0, 12), sticky=tk.W)
-
-        ttk.Label(form_frame, text="Срок (ДД.ММ.ГГГГ)").grid(
-            row=0, column=3, sticky=tk.W
-        )
-        date_entry = ttk.Entry(form_frame, textvariable=self.date_var, width=18)
-        date_entry.grid(row=1, column=3, padx=(0, 12), sticky=tk.W)
-        attach_date_placeholder(date_entry, self.date_var)
-
-        ttk.Label(form_frame, text="Примечание").grid(row=0, column=4, sticky=tk.W)
-        ttk.Entry(form_frame, textvariable=self.notes_var, width=30).grid(
-            row=1, column=4, sticky=tk.W
-        )
-
-        ttk.Button(form_frame, text="Добавить", command=self._handle_add).grid(
-            row=1, column=5, padx=(12, 0), sticky=tk.W
-        )
+    def _build_empty_state(self) -> None:
+        ttk.Label(
+            self,
+            text="Добавляйте записи через кнопку «Добавить».",
+            foreground="#6c757d",
+        ).pack(fill=tk.X, padx=12, pady=(0, 12))
 
     def _load_records(self) -> None:
         for row in self.tree.get_children():
@@ -356,24 +321,8 @@ class EpidemiologistTracker(tk.Tk):
             return f"Скоро истекает ({DUE_SOON_DAYS} дн.)", "due_soon"
         return "В норме", "ok"
 
-    def _handle_add(self) -> None:
-        payload = RecordInput(
-            person=self.person_var.get().strip(),
-            item=self.item_var.get().strip(),
-            category=self.category_var.get().strip(),
-            due_date=self.date_var.get().strip(),
-            notes=self.notes_var.get().strip(),
-        )
-        parsed_date = self._validate_payload(payload)
-        if parsed_date is None:
-            return
-        payload.due_date = parsed_date.isoformat()
-        self._insert_record(payload)
-        self.person_var.set("")
-        self.item_var.set("")
-        self.category_var.set(DEFAULT_CATEGORY)
-        self.date_var.set("")
-        self.notes_var.set("")
+    def _open_add_dialog(self) -> None:
+        AddDialog(self)
 
     @staticmethod
     def _parse_date(value: str) -> date | None:
@@ -430,6 +379,28 @@ class EpidemiologistTracker(tk.Tk):
                     payload.due_date,
                     payload.notes,
                 ),
+            )
+        self._load_records()
+
+    def _insert_records(self, payloads: list["RecordInput"]) -> None:
+        if not payloads:
+            return
+        with self.connection:
+            self.connection.executemany(
+                """
+                INSERT INTO records (person, item, category, due_date, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        payload.person,
+                        payload.item,
+                        payload.category,
+                        payload.due_date,
+                        payload.notes,
+                    )
+                    for payload in payloads
+                ],
             )
         self._load_records()
 
@@ -592,6 +563,109 @@ class EditDialog(tk.Toplevel):
             return
         payload.due_date = parsed_date.isoformat()
         self.parent._update_record(self.record_id, payload)
+        self.destroy()
+
+
+class AddDialog(tk.Toplevel):
+    def __init__(self, parent: EpidemiologistTracker) -> None:
+        super().__init__(parent)
+        self.title("Добавить записи")
+        self.resizable(False, False)
+        self.parent = parent
+        self.entries: dict[tuple[str, str], tk.StringVar] = {}
+        self.note_entries: dict[tuple[str, str], tk.StringVar] = {}
+
+        self._build_form()
+        self.grab_set()
+        self.transient(parent)
+
+    def _build_form(self) -> None:
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Сотрудник / группа").grid(row=0, column=0, sticky=tk.W)
+        self.person_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.person_var, width=40).grid(
+            row=1, column=0, columnspan=3, sticky=tk.W
+        )
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=2, column=0, columnspan=3, pady=(12, 0), sticky=tk.W)
+
+        ttk.Label(list_frame, text="Название").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(list_frame, text="Категория").grid(row=0, column=1, sticky=tk.W)
+        ttk.Label(list_frame, text="Срок (ДД.ММ.ГГГГ)").grid(
+            row=0, column=2, sticky=tk.W
+        )
+        ttk.Label(list_frame, text="Примечание").grid(row=0, column=3, sticky=tk.W)
+
+        for index, (category, item_name) in enumerate(MEDBOOK_ITEMS, start=1):
+            ttk.Label(list_frame, text=item_name).grid(
+                row=index, column=0, sticky=tk.W, pady=2
+            )
+            ttk.Label(list_frame, text=category).grid(
+                row=index, column=1, sticky=tk.W, padx=(8, 12)
+            )
+            date_var = tk.StringVar()
+            date_entry = ttk.Entry(list_frame, textvariable=date_var, width=16)
+            date_entry.grid(row=index, column=2, sticky=tk.W)
+            attach_date_placeholder(date_entry, date_var)
+            note_var = tk.StringVar()
+            ttk.Entry(list_frame, textvariable=note_var, width=24).grid(
+                row=index, column=3, sticky=tk.W, padx=(8, 0)
+            )
+            self.entries[(category, item_name)] = date_var
+            self.note_entries[(category, item_name)] = note_var
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=3, pady=(12, 0), sticky=tk.E)
+        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
+            side=tk.RIGHT, padx=(6, 0)
+        )
+        ttk.Button(button_frame, text="Сохранить", command=self._handle_submit).pack(
+            side=tk.RIGHT
+        )
+
+    def _handle_submit(self) -> None:
+        person = self.person_var.get().strip()
+        if not person:
+            messagebox.showwarning("Проверка", "Заполните сотрудника/группу.")
+            return
+        payloads: list[RecordInput] = []
+        for category, item_name in MEDBOOK_ITEMS:
+            date_value = self.entries[(category, item_name)].get().strip()
+            if not date_value or date_value == "ДД.ММ.ГГГГ":
+                continue
+            normalized = normalize_date_value(date_value)
+            if not normalized:
+                messagebox.showwarning(
+                    "Проверка",
+                    f"Неверная дата для пункта «{item_name}».",
+                )
+                return
+            parsed_date = self.parent._parse_date(normalized)
+            if parsed_date is None:
+                messagebox.showwarning(
+                    "Проверка",
+                    f"Неверная дата для пункта «{item_name}».",
+                )
+                return
+            notes = self.note_entries[(category, item_name)].get().strip()
+            payloads.append(
+                RecordInput(
+                    person=person,
+                    item=item_name,
+                    category=category,
+                    due_date=parsed_date.isoformat(),
+                    notes=notes,
+                )
+            )
+        if not payloads:
+            messagebox.showwarning(
+                "Проверка", "Заполните хотя бы одну дату для добавления."
+            )
+            return
+        self.parent._insert_records(payloads)
         self.destroy()
 
 
