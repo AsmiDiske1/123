@@ -278,7 +278,7 @@ class RecordDialog(tk.Toplevel):
             width=38,
         )
         category_combo.grid(row=5, column=0, columnspan=2, sticky=tk.W)
-        self._add_field(frame, "Срок до (ГГГГ-ММ-ДД)", self.date_var, 3)
+        self._add_field(frame, "Срок (ГГГГ-ММ-ДД)", self.date_var, 3)
 
         notes_label = ttk.Label(frame, text="Примечание")
         notes_label.grid(row=6, column=0, sticky=tk.W, pady=(6, 0))
