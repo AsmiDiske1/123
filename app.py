@@ -38,29 +38,44 @@ def clamp_date(day: int, month: int, year: int) -> tuple[int, int, int]:
 
 
 def normalize_date_value(value: str) -> str | None:
-    digits = "".join(char for char in value if char.isdigit())
-    if len(digits) != 8:
-        return None
-    day = int(digits[:2])
-    month = int(digits[2:4])
-    year = int(digits[4:])
+    value = value.strip()
+    if "." in value:
+        parts = [part for part in value.split(".") if part]
+        if len(parts) < 3:
+            return None
+        day_part, month_part, year_part = parts[:3]
+        if not (day_part.isdigit() and month_part.isdigit() and year_part.isdigit()):
+            return None
+        day = int(day_part.zfill(2))
+        month = int(month_part.zfill(2))
+        year = int(year_part.zfill(4))
+    else:
+        digits = "".join(char for char in value if char.isdigit())
+        if len(digits) != 8:
+            return None
+        day = int(digits[:2])
+        month = int(digits[2:4])
+        year = int(digits[4:])
     day, month, year = clamp_date(day, month, year)
     return f"{day:02d}.{month:02d}.{year:04d}"
 
 
-def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
+def attach_date_placeholder(
+    entry: ttk.Entry, variable: tk.StringVar, use_placeholder: bool = True
+) -> None:
     placeholder = "ДД.ММ.ГГГГ"
-    if not variable.get():
+    if use_placeholder and not variable.get():
         variable.set(placeholder)
 
     def on_focus_in(_: tk.Event) -> None:
-        if variable.get() == placeholder:
+        if use_placeholder and variable.get() == placeholder:
             variable.set("")
 
     def on_focus_out(_: tk.Event) -> None:
         current = variable.get().strip()
         if not current:
-            variable.set(placeholder)
+            if use_placeholder:
+                variable.set(placeholder)
             return
         normalized = normalize_date_value(current)
         if normalized:
@@ -68,23 +83,38 @@ def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
 
     def on_key_release(_: tk.Event) -> None:
         value = entry.get()
-        if value == placeholder:
+        if use_placeholder and value == placeholder:
             return
-        digits = "".join(char for char in value if char.isdigit())
-        if len(digits) > 8:
-            digits = digits[:8]
-        parts = []
-        if len(digits) >= 2:
-            parts.append(digits[:2])
-        elif digits:
-            parts.append(digits)
-        if len(digits) >= 4:
-            parts.append(digits[2:4])
-        elif len(digits) > 2:
-            parts.append(digits[2:])
-        if len(digits) > 4:
-            parts.append(digits[4:])
-        formatted = ".".join(parts)
+        if "." in value:
+            raw_parts = value.split(".")
+            parts: list[str] = []
+            for idx, part in enumerate(raw_parts):
+                if idx > 2:
+                    break
+                if not part:
+                    parts.append(part)
+                    continue
+                if idx < 2 and len(part) == 1 and idx < len(raw_parts) - 1:
+                    parts.append(f"0{part}")
+                else:
+                    parts.append(part)
+            formatted = ".".join(parts)
+        else:
+            digits = "".join(char for char in value if char.isdigit())
+            if len(digits) > 8:
+                digits = digits[:8]
+            parts = []
+            if len(digits) >= 2:
+                parts.append(digits[:2])
+            elif digits:
+                parts.append(digits)
+            if len(digits) >= 4:
+                parts.append(digits[2:4])
+            elif len(digits) > 2:
+                parts.append(digits[2:])
+            if len(digits) > 4:
+                parts.append(digits[4:])
+            formatted = ".".join(parts)
         if formatted != value:
             variable.set(formatted)
             entry.icursor(tk.END)
@@ -167,13 +197,11 @@ class EpidemiologistTracker(tk.Tk):
         self.tree = ttk.Treeview(
             self,
             columns=columns,
-            show="tree headings",
+            show="tree",
             height=18,
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
         self.tree.bind("<Button-1>", self._handle_tree_click, add="+")
-        self.tree.bind("<<TreeviewOpen>>", self._handle_tree_toggle, add="+")
-        self.tree.bind("<<TreeviewClose>>", self._handle_tree_toggle, add="+")
 
         self.tree.heading(
             "#0",
@@ -196,7 +224,6 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.tag_configure("ok", background="#e7f5ff")
 
         self._build_empty_state()
-        self._update_tree_headers()
 
     def _build_empty_state(self) -> None:
         ttk.Label(
@@ -239,6 +266,13 @@ class EpidemiologistTracker(tk.Tk):
                 iid=parent_id,
                 text=person,
                 values=("", "", "", ""),
+            )
+            self.tree.insert(
+                parent_id,
+                tk.END,
+                iid=f"header:{person}",
+                text="",
+                values=("Название", "Срок до", "Статус", "Примечание"),
             )
 
             latest_by_item: dict[str, Record] = {}
@@ -295,7 +329,6 @@ class EpidemiologistTracker(tk.Tk):
                 )
 
             self.tree.item(parent_id, open=True)
-        self._update_tree_headers()
 
     def _toggle_person_sort(self) -> None:
         self._sort_ascending = not self._sort_ascending
@@ -304,15 +337,6 @@ class EpidemiologistTracker(tk.Tk):
     def _handle_tree_click(self, event: tk.Event) -> None:
         if not self.tree.identify_row(event.y):
             self.tree.selection_remove(self.tree.selection())
-
-    def _handle_tree_toggle(self, _: tk.Event) -> None:
-        self._update_tree_headers()
-
-    def _update_tree_headers(self) -> None:
-        has_open = any(
-            self.tree.item(item, "open") for item in self.tree.get_children("")
-        )
-        self.tree.configure(show="tree headings" if has_open else "tree")
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
@@ -406,30 +430,11 @@ class EpidemiologistTracker(tk.Tk):
         self._load_records()
 
     def _open_edit_dialog(self) -> None:
-        record_id = self._selected_record_id()
-        if record_id is None:
-            messagebox.showinfo("Выбор записи", "Выберите запись для изменения.")
+        person = self._selected_person()
+        if not person:
+            messagebox.showinfo("Выбор записи", "Выберите сотрудника для изменения.")
             return
-        cursor = self.connection.execute(
-            "SELECT person, item, category, due_date, notes FROM records WHERE id = ?",
-            (record_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            messagebox.showerror("Ошибка", "Запись не найдена.")
-            return
-        due_date = date.fromisoformat(row[3]).strftime("%d.%m.%Y")
-        EditDialog(
-            self,
-            record_id,
-            RecordInput(
-                person=row[0],
-                item=row[1],
-                category=row[2],
-                due_date=due_date,
-                notes=row[4] or "",
-            ),
-        )
+        EditAllDialog(self, person)
 
     def _update_record(self, record_id: int, payload: "RecordInput") -> None:
         with self.connection:
@@ -468,10 +473,29 @@ class EpidemiologistTracker(tk.Tk):
         if not selection:
             return None
         selected = selection[0]
-        if selected.startswith("person:"):
+        if selected.startswith("person:") or selected.startswith("header:"):
             return None
         if selected.startswith("record:"):
             return int(selected.split("record:", 1)[1])
+        return None
+
+    def _selected_person(self) -> str | None:
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        selected = selection[0]
+        if selected.startswith("person:"):
+            return selected.split("person:", 1)[1]
+        if selected.startswith("record:"):
+            record_id = int(selected.split("record:", 1)[1])
+            cursor = self.connection.execute(
+                "SELECT person FROM records WHERE id = ?",
+                (record_id,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+        if selected.startswith("header:"):
+            return selected.split("header:", 1)[1]
         return None
 
     def destroy(self) -> None:
@@ -486,74 +510,6 @@ class RecordInput:
     category: str
     due_date: str
     notes: str
-
-
-class EditDialog(tk.Toplevel):
-    def __init__(self, parent: EpidemiologistTracker, record_id: int, data: RecordInput) -> None:
-        super().__init__(parent)
-        self.title("Изменить запись")
-        self.resizable(False, False)
-        self.parent = parent
-        self.record_id = record_id
-        self.data = data
-
-        self._build_form()
-        self.grab_set()
-        self.transient(parent)
-
-    def _build_form(self) -> None:
-        frame = ttk.Frame(self, padding=12)
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        self.person_var = tk.StringVar(value=self.data.person)
-        self.item_var = tk.StringVar(value=self.data.item)
-        self.date_var = tk.StringVar(value=self.data.due_date)
-        self.notes_var = tk.StringVar(value=self.data.notes)
-
-        ttk.Label(frame, text="Сотрудник / группа").grid(row=0, column=0, sticky=tk.W)
-        ttk.Entry(frame, textvariable=self.person_var, width=40).grid(
-            row=1, column=0, columnspan=2, sticky=tk.W
-        )
-
-        ttk.Label(frame, text="Название").grid(row=2, column=0, sticky=tk.W)
-        ttk.Entry(frame, textvariable=self.item_var, width=40).grid(
-            row=3, column=0, columnspan=2, sticky=tk.W
-        )
-
-        ttk.Label(frame, text="Срок (ДД.ММ.ГГГГ)").grid(row=4, column=0, sticky=tk.W)
-        date_entry = ttk.Entry(frame, textvariable=self.date_var, width=20)
-        date_entry.grid(row=5, column=0, sticky=tk.W)
-        attach_date_placeholder(date_entry, self.date_var)
-
-        ttk.Label(frame, text="Примечание").grid(row=6, column=0, sticky=tk.W)
-        ttk.Entry(frame, textvariable=self.notes_var, width=40).grid(
-            row=7, column=0, columnspan=2, sticky=tk.W
-        )
-
-        button_frame = ttk.Frame(frame)
-        button_frame.grid(row=8, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
-
-        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
-            side=tk.RIGHT, padx=(6, 0)
-        )
-        ttk.Button(button_frame, text="Сохранить", command=self._handle_submit).pack(
-            side=tk.RIGHT
-        )
-
-    def _handle_submit(self) -> None:
-        payload = RecordInput(
-            person=self.person_var.get().strip(),
-            item=self.item_var.get().strip(),
-            category=self.data.category,
-            due_date=self.date_var.get().strip(),
-            notes=self.notes_var.get().strip(),
-        )
-        parsed_date = self.parent._validate_payload(payload)
-        if parsed_date is None:
-            return
-        payload.due_date = parsed_date.isoformat()
-        self.parent._update_record(self.record_id, payload)
-        self.destroy()
 
 
 class AddDialog(tk.Toplevel):
@@ -593,7 +549,7 @@ class AddDialog(tk.Toplevel):
             date_var = tk.StringVar()
             date_entry = ttk.Entry(list_frame, textvariable=date_var, width=16)
             date_entry.grid(row=index, column=1, sticky=tk.W)
-            attach_date_placeholder(date_entry, date_var)
+            attach_date_placeholder(date_entry, date_var, use_placeholder=False)
             self.entries[(category, item_name)] = date_var
 
         ttk.Label(frame, text="Примечание").grid(row=3, column=0, sticky=tk.W, pady=(8, 0))
@@ -648,6 +604,111 @@ class AddDialog(tk.Toplevel):
         if not payloads:
             messagebox.showwarning(
                 "Проверка", "Заполните хотя бы одну дату для добавления."
+            )
+            return
+        self.parent._insert_records(payloads)
+        self.destroy()
+
+
+class EditAllDialog(tk.Toplevel):
+    def __init__(self, parent: EpidemiologistTracker, person: str) -> None:
+        super().__init__(parent)
+        self.title("Изменить записи")
+        self.resizable(False, False)
+        self.parent = parent
+        self.person = person
+        self.entries: dict[tuple[str, str], tk.StringVar] = {}
+
+        self._build_form()
+        self.grab_set()
+        self.transient(parent)
+
+    def _build_form(self) -> None:
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Сотрудник / группа").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(frame, text=self.person).grid(row=1, column=0, sticky=tk.W)
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=2, column=0, columnspan=3, pady=(12, 0), sticky=tk.W)
+
+        ttk.Label(list_frame, text="Название").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(list_frame, text="Срок (ДД.ММ.ГГГГ)").grid(
+            row=0, column=1, sticky=tk.W
+        )
+
+        cursor = self.parent.connection.execute(
+            "SELECT item, due_date FROM records WHERE person = ?",
+            (self.person,),
+        )
+        latest_dates: dict[str, date] = {}
+        for item, due_date in cursor.fetchall():
+            parsed = date.fromisoformat(due_date)
+            existing = latest_dates.get(item)
+            if existing is None or parsed > existing:
+                latest_dates[item] = parsed
+
+        for index, (category, item_name) in enumerate(MEDBOOK_ITEMS, start=1):
+            ttk.Label(list_frame, text=item_name).grid(
+                row=index, column=0, sticky=tk.W, pady=2
+            )
+            date_var = tk.StringVar()
+            existing = latest_dates.get(item_name)
+            if existing:
+                date_var.set(existing.strftime("%d.%m.%Y"))
+            date_entry = ttk.Entry(list_frame, textvariable=date_var, width=16)
+            date_entry.grid(row=index, column=1, sticky=tk.W)
+            attach_date_placeholder(date_entry, date_var, use_placeholder=False)
+            self.entries[(category, item_name)] = date_var
+
+        ttk.Label(frame, text="Примечание").grid(row=3, column=0, sticky=tk.W, pady=(8, 0))
+        self.notes_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.notes_var, width=50).grid(
+            row=4, column=0, columnspan=3, sticky=tk.W
+        )
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=5, column=0, columnspan=3, pady=(12, 0), sticky=tk.E)
+        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
+            side=tk.RIGHT, padx=(6, 0)
+        )
+        ttk.Button(button_frame, text="Сохранить", command=self._handle_submit).pack(
+            side=tk.RIGHT
+        )
+
+    def _handle_submit(self) -> None:
+        payloads: list[RecordInput] = []
+        for category, item_name in MEDBOOK_ITEMS:
+            date_value = self.entries[(category, item_name)].get().strip()
+            if not date_value:
+                continue
+            normalized = normalize_date_value(date_value)
+            if not normalized:
+                messagebox.showwarning(
+                    "Проверка",
+                    f"Неверная дата для пункта «{item_name}».",
+                )
+                return
+            parsed_date = self.parent._parse_date(normalized)
+            if parsed_date is None:
+                messagebox.showwarning(
+                    "Проверка",
+                    f"Неверная дата для пункта «{item_name}».",
+                )
+                return
+            payloads.append(
+                RecordInput(
+                    person=self.person,
+                    item=item_name,
+                    category=category,
+                    due_date=parsed_date.isoformat(),
+                    notes=self.notes_var.get().strip(),
+                )
+            )
+        if not payloads:
+            messagebox.showwarning(
+                "Проверка", "Заполните хотя бы одну дату для изменения."
             )
             return
         self.parent._insert_records(payloads)
