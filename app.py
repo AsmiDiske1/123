@@ -6,6 +6,7 @@ from tkinter import messagebox, ttk
 
 DB_PATH = "epidemiologist.db"
 DUE_SOON_DAYS = 30
+DEFAULT_CATEGORY = "Без категории"
 
 
 @dataclass
@@ -22,8 +23,8 @@ class EpidemiologistTracker(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Контроль прививок и медосмотров")
-        self.geometry("980x540")
-        self.minsize(900, 500)
+        self.geometry("1120x620")
+        self.minsize(1040, 600)
 
         self.connection = sqlite3.connect(DB_PATH)
         self._init_db()
@@ -60,10 +61,10 @@ class EpidemiologistTracker(tk.Tk):
         button_frame = ttk.Frame(self)
         button_frame.pack(fill=tk.X, padx=12, pady=4)
 
-        ttk.Button(button_frame, text="Удалить", command=self._delete_record).pack(
+        ttk.Button(button_frame, text="Изменить", command=self._open_edit_dialog).pack(
             side=tk.LEFT, padx=(0, 6)
         )
-        ttk.Button(button_frame, text="Обновить", command=self._load_records).pack(
+        ttk.Button(button_frame, text="Удалить", command=self._delete_record).pack(
             side=tk.LEFT
         )
 
@@ -105,7 +106,6 @@ class EpidemiologistTracker(tk.Tk):
 
         self.person_var = tk.StringVar()
         self.item_var = tk.StringVar()
-        self.category_var = tk.StringVar()
         self.date_var = tk.StringVar()
         self.notes_var = tk.StringVar()
 
@@ -121,29 +121,20 @@ class EpidemiologistTracker(tk.Tk):
             row=1, column=1, padx=(0, 12), sticky=tk.W
         )
 
-        ttk.Label(form_frame, text="Категория").grid(row=0, column=2, sticky=tk.W)
-        category_combo = ttk.Combobox(
-            form_frame,
-            textvariable=self.category_var,
-            values=("Прививка", "Исследование", "Медосмотр", "Другое"),
-            width=24,
-        )
-        category_combo.grid(row=1, column=2, padx=(0, 12), sticky=tk.W)
-
         ttk.Label(form_frame, text="Срок (ГГГГ-ММ-ДД)").grid(
-            row=0, column=3, sticky=tk.W
+            row=0, column=2, sticky=tk.W
         )
         ttk.Entry(form_frame, textvariable=self.date_var, width=18).grid(
-            row=1, column=3, padx=(0, 12), sticky=tk.W
+            row=1, column=2, padx=(0, 12), sticky=tk.W
         )
 
-        ttk.Label(form_frame, text="Примечание").grid(row=0, column=4, sticky=tk.W)
+        ttk.Label(form_frame, text="Примечание").grid(row=0, column=3, sticky=tk.W)
         ttk.Entry(form_frame, textvariable=self.notes_var, width=30).grid(
-            row=1, column=4, sticky=tk.W
+            row=1, column=3, sticky=tk.W
         )
 
         ttk.Button(form_frame, text="Добавить", command=self._handle_add).grid(
-            row=1, column=5, padx=(12, 0), sticky=tk.W
+            row=1, column=4, padx=(12, 0), sticky=tk.W
         )
 
     def _load_records(self) -> None:
@@ -190,16 +181,17 @@ class EpidemiologistTracker(tk.Tk):
         payload = RecordInput(
             person=self.person_var.get().strip(),
             item=self.item_var.get().strip(),
-            category=self.category_var.get().strip(),
+            category=DEFAULT_CATEGORY,
             due_date=self.date_var.get().strip(),
             notes=self.notes_var.get().strip(),
         )
-        if not self._validate_payload(payload):
+        parsed_date = self._validate_payload(payload)
+        if parsed_date is None:
             return
+        payload.due_date = parsed_date.isoformat()
         self._insert_record(payload)
         self.person_var.set("")
         self.item_var.set("")
-        self.category_var.set("")
         self.date_var.set("")
         self.notes_var.set("")
 
@@ -212,14 +204,12 @@ class EpidemiologistTracker(tk.Tk):
                 continue
         return None
 
-    def _validate_payload(self, payload: "RecordInput") -> bool:
+    def _validate_payload(self, payload: "RecordInput") -> date | None:
         missing_fields = []
         if not payload.person:
             missing_fields.append("сотрудник/группа")
         if not payload.item:
             missing_fields.append("название")
-        if not payload.category:
-            missing_fields.append("категория")
         if not payload.due_date:
             missing_fields.append("срок")
         if missing_fields:
@@ -227,20 +217,20 @@ class EpidemiologistTracker(tk.Tk):
                 "Проверка",
                 "Заполните поля: " + ", ".join(missing_fields) + ".",
             )
-            return False
+            return None
         parsed_date = self._parse_date(payload.due_date)
         if parsed_date is None:
             messagebox.showwarning(
                 "Проверка",
                 "Введите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
             )
-            return False
+            return None
         if parsed_date.year < 2000 or parsed_date.year > 2100:
             messagebox.showwarning(
                 "Проверка", "Проверьте год даты срока действия."
             )
-            return False
-        return True
+            return None
+        return parsed_date
 
     def _insert_record(self, payload: "RecordInput") -> None:
         with self.connection:
@@ -258,6 +248,32 @@ class EpidemiologistTracker(tk.Tk):
                 ),
             )
         self._load_records()
+
+    def _open_edit_dialog(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Выбор записи", "Выберите запись для изменения.")
+            return
+        record_id = int(selection[0])
+        cursor = self.connection.execute(
+            "SELECT person, item, category, due_date, notes FROM records WHERE id = ?",
+            (record_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            messagebox.showerror("Ошибка", "Запись не найдена.")
+            return
+        EditDialog(
+            self,
+            record_id,
+            RecordInput(
+                person=row[0],
+                item=row[1],
+                category=row[2],
+                due_date=row[3],
+                notes=row[4] or "",
+            ),
+        )
 
     def _update_record(self, record_id: int, payload: "RecordInput") -> None:
         with self.connection:
@@ -304,6 +320,74 @@ class RecordInput:
     category: str
     due_date: str
     notes: str
+
+
+class EditDialog(tk.Toplevel):
+    def __init__(self, parent: EpidemiologistTracker, record_id: int, data: RecordInput) -> None:
+        super().__init__(parent)
+        self.title("Изменить запись")
+        self.resizable(False, False)
+        self.parent = parent
+        self.record_id = record_id
+        self.data = data
+
+        self._build_form()
+        self.grab_set()
+        self.transient(parent)
+
+    def _build_form(self) -> None:
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.person_var = tk.StringVar(value=self.data.person)
+        self.item_var = tk.StringVar(value=self.data.item)
+        self.date_var = tk.StringVar(value=self.data.due_date)
+        self.notes_var = tk.StringVar(value=self.data.notes)
+
+        ttk.Label(frame, text="Сотрудник / группа").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self.person_var, width=40).grid(
+            row=1, column=0, columnspan=2, sticky=tk.W
+        )
+
+        ttk.Label(frame, text="Название").grid(row=2, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self.item_var, width=40).grid(
+            row=3, column=0, columnspan=2, sticky=tk.W
+        )
+
+        ttk.Label(frame, text="Срок (ГГГГ-ММ-ДД)").grid(row=4, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self.date_var, width=20).grid(
+            row=5, column=0, sticky=tk.W
+        )
+
+        ttk.Label(frame, text="Примечание").grid(row=6, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self.notes_var, width=40).grid(
+            row=7, column=0, columnspan=2, sticky=tk.W
+        )
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=8, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
+
+        ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
+            side=tk.RIGHT, padx=(6, 0)
+        )
+        ttk.Button(button_frame, text="Сохранить", command=self._handle_submit).pack(
+            side=tk.RIGHT
+        )
+
+    def _handle_submit(self) -> None:
+        payload = RecordInput(
+            person=self.person_var.get().strip(),
+            item=self.item_var.get().strip(),
+            category=self.data.category,
+            due_date=self.date_var.get().strip(),
+            notes=self.notes_var.get().strip(),
+        )
+        parsed_date = self.parent._validate_payload(payload)
+        if parsed_date is None:
+            return
+        payload.due_date = parsed_date.isoformat()
+        self.parent._update_record(self.record_id, payload)
+        self.destroy()
 
 
 if __name__ == "__main__":
