@@ -58,8 +58,8 @@ def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
         if normalized:
             variable.set(normalized)
 
-    def on_text_change(*_: object) -> None:
-        value = variable.get()
+    def on_key_release(_: tk.Event) -> None:
+        value = entry.get()
         if value == placeholder:
             return
         digits = "".join(char for char in value if char.isdigit())
@@ -79,10 +79,11 @@ def attach_date_placeholder(entry: ttk.Entry, variable: tk.StringVar) -> None:
         formatted = ".".join(parts)
         if formatted != value:
             variable.set(formatted)
+            entry.icursor(tk.END)
 
-    variable.trace_add("write", on_text_change)
     entry.bind("<FocusIn>", on_focus_in)
     entry.bind("<FocusOut>", on_focus_out)
+    entry.bind("<KeyRelease>", on_key_release)
 
 
 @dataclass
