@@ -7,6 +7,13 @@ from tkinter import messagebox, ttk
 DB_PATH = "epidemiologist.db"
 DUE_SOON_DAYS = 30
 DEFAULT_CATEGORY = "Без категории"
+CATEGORY_OPTIONS = (
+    DEFAULT_CATEGORY,
+    "Прививка",
+    "Исследование",
+    "Медосмотр",
+    "Другое",
+)
 
 
 @dataclass
@@ -83,7 +90,11 @@ class EpidemiologistTracker(tk.Tk):
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
 
-        self.tree.heading("person", text="Сотрудник / группа")
+        self.tree.heading(
+            "person",
+            text="Сотрудник / группа",
+            command=lambda: self._sort_tree("person", False),
+        )
         self.tree.heading("item", text="Название")
         self.tree.heading("category", text="Категория")
         self.tree.heading("due_date", text="Срок до")
@@ -106,6 +117,7 @@ class EpidemiologistTracker(tk.Tk):
 
         self.person_var = tk.StringVar()
         self.item_var = tk.StringVar()
+        self.category_var = tk.StringVar(value=DEFAULT_CATEGORY)
         self.date_var = tk.StringVar()
         self.notes_var = tk.StringVar()
 
@@ -121,20 +133,30 @@ class EpidemiologistTracker(tk.Tk):
             row=1, column=1, padx=(0, 12), sticky=tk.W
         )
 
-        ttk.Label(form_frame, text="Срок (ГГГГ-ММ-ДД)").grid(
-            row=0, column=2, sticky=tk.W
+        ttk.Label(form_frame, text="Категория").grid(row=0, column=2, sticky=tk.W)
+        category_combo = ttk.Combobox(
+            form_frame,
+            textvariable=self.category_var,
+            values=CATEGORY_OPTIONS,
+            width=24,
+            state="readonly",
+        )
+        category_combo.grid(row=1, column=2, padx=(0, 12), sticky=tk.W)
+
+        ttk.Label(form_frame, text="Срок (ДД.ММ.ГГГГ)").grid(
+            row=0, column=3, sticky=tk.W
         )
         ttk.Entry(form_frame, textvariable=self.date_var, width=18).grid(
-            row=1, column=2, padx=(0, 12), sticky=tk.W
+            row=1, column=3, padx=(0, 12), sticky=tk.W
         )
 
-        ttk.Label(form_frame, text="Примечание").grid(row=0, column=3, sticky=tk.W)
+        ttk.Label(form_frame, text="Примечание").grid(row=0, column=4, sticky=tk.W)
         ttk.Entry(form_frame, textvariable=self.notes_var, width=30).grid(
-            row=1, column=3, sticky=tk.W
+            row=1, column=4, sticky=tk.W
         )
 
         ttk.Button(form_frame, text="Добавить", command=self._handle_add).grid(
-            row=1, column=4, padx=(12, 0), sticky=tk.W
+            row=1, column=5, padx=(12, 0), sticky=tk.W
         )
 
     def _load_records(self) -> None:
@@ -162,12 +184,22 @@ class EpidemiologistTracker(tk.Tk):
                     record.person,
                     record.item,
                     record.category,
-                    record.due_date.isoformat(),
+                    record.due_date.strftime("%d.%m.%Y"),
                     status_label,
                     record.notes,
                 ),
                 tags=(tag,),
             )
+
+    def _sort_tree(self, col: str, reverse: bool) -> None:
+        items = [(self.tree.set(item, col), item) for item in self.tree.get_children("")]
+        items.sort(key=lambda pair: pair[0].lower(), reverse=reverse)
+        for index, (_, item) in enumerate(items):
+            self.tree.move(item, "", index)
+        self.tree.heading(
+            col,
+            command=lambda: self._sort_tree(col, not reverse),
+        )
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
@@ -181,7 +213,7 @@ class EpidemiologistTracker(tk.Tk):
         payload = RecordInput(
             person=self.person_var.get().strip(),
             item=self.item_var.get().strip(),
-            category=DEFAULT_CATEGORY,
+            category=self.category_var.get().strip(),
             due_date=self.date_var.get().strip(),
             notes=self.notes_var.get().strip(),
         )
@@ -192,12 +224,13 @@ class EpidemiologistTracker(tk.Tk):
         self._insert_record(payload)
         self.person_var.set("")
         self.item_var.set("")
+        self.category_var.set(DEFAULT_CATEGORY)
         self.date_var.set("")
         self.notes_var.set("")
 
     @staticmethod
     def _parse_date(value: str) -> date | None:
-        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        for fmt in ("%d.%m.%Y",):
             try:
                 return datetime.strptime(value, fmt).date()
             except ValueError:
@@ -210,6 +243,8 @@ class EpidemiologistTracker(tk.Tk):
             missing_fields.append("сотрудник/группа")
         if not payload.item:
             missing_fields.append("название")
+        if not payload.category:
+            missing_fields.append("категория")
         if not payload.due_date:
             missing_fields.append("срок")
         if missing_fields:
@@ -222,7 +257,7 @@ class EpidemiologistTracker(tk.Tk):
         if parsed_date is None:
             messagebox.showwarning(
                 "Проверка",
-                "Введите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
+                "Введите дату в формате ДД.ММ.ГГГГ.",
             )
             return None
         if parsed_date.year < 2000 or parsed_date.year > 2100:
@@ -263,6 +298,7 @@ class EpidemiologistTracker(tk.Tk):
         if not row:
             messagebox.showerror("Ошибка", "Запись не найдена.")
             return
+        due_date = date.fromisoformat(row[3]).strftime("%d.%m.%Y")
         EditDialog(
             self,
             record_id,
@@ -270,7 +306,7 @@ class EpidemiologistTracker(tk.Tk):
                 person=row[0],
                 item=row[1],
                 category=row[2],
-                due_date=row[3],
+                due_date=due_date,
                 notes=row[4] or "",
             ),
         )
@@ -341,6 +377,7 @@ class EditDialog(tk.Toplevel):
 
         self.person_var = tk.StringVar(value=self.data.person)
         self.item_var = tk.StringVar(value=self.data.item)
+        self.category_var = tk.StringVar(value=self.data.category)
         self.date_var = tk.StringVar(value=self.data.due_date)
         self.notes_var = tk.StringVar(value=self.data.notes)
 
@@ -354,18 +391,28 @@ class EditDialog(tk.Toplevel):
             row=3, column=0, columnspan=2, sticky=tk.W
         )
 
-        ttk.Label(frame, text="Срок (ГГГГ-ММ-ДД)").grid(row=4, column=0, sticky=tk.W)
+        ttk.Label(frame, text="Категория").grid(row=4, column=0, sticky=tk.W)
+        category_combo = ttk.Combobox(
+            frame,
+            textvariable=self.category_var,
+            values=CATEGORY_OPTIONS,
+            width=38,
+            state="readonly",
+        )
+        category_combo.grid(row=5, column=0, columnspan=2, sticky=tk.W)
+
+        ttk.Label(frame, text="Срок (ДД.ММ.ГГГГ)").grid(row=6, column=0, sticky=tk.W)
         ttk.Entry(frame, textvariable=self.date_var, width=20).grid(
-            row=5, column=0, sticky=tk.W
+            row=7, column=0, sticky=tk.W
         )
 
-        ttk.Label(frame, text="Примечание").grid(row=6, column=0, sticky=tk.W)
+        ttk.Label(frame, text="Примечание").grid(row=8, column=0, sticky=tk.W)
         ttk.Entry(frame, textvariable=self.notes_var, width=40).grid(
-            row=7, column=0, columnspan=2, sticky=tk.W
+            row=9, column=0, columnspan=2, sticky=tk.W
         )
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=8, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
+        button_frame.grid(row=10, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
 
         ttk.Button(button_frame, text="Отмена", command=self.destroy).pack(
             side=tk.RIGHT, padx=(6, 0)
@@ -378,7 +425,7 @@ class EditDialog(tk.Toplevel):
         payload = RecordInput(
             person=self.person_var.get().strip(),
             item=self.item_var.get().strip(),
-            category=self.data.category,
+            category=self.category_var.get().strip(),
             due_date=self.date_var.get().strip(),
             notes=self.notes_var.get().strip(),
         )
