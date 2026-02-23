@@ -169,15 +169,10 @@ class EpidemiologistTracker(tk.Tk):
         if cursor.fetchone()[0]:
             return
         today = date.today()
-        samples = [
-            ("Иванов И.И.", "Корь", "Прививка", today.replace(year=today.year + 1)),
-            (
-                "Иванов И.И.",
-                "ФЛГ (флюорография)",
-                "Исследование",
-                today.replace(year=today.year + 1),
-            ),
-        ]
+        samples = []
+        for idx, (category, item) in enumerate(MEDBOOK_ITEMS):
+            due_date = today + timedelta(days=15 + idx * 10)
+            samples.append(("Иванов И.И.", item, category, due_date))
         with self.connection:
             self.connection.executemany(
                 """
@@ -246,9 +241,9 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.column("status", width=140, anchor=tk.CENTER)
         self.tree.column("notes", width=220)
 
-        self.tree.tag_configure("overdue", background="#f8d7da")
-        self.tree.tag_configure("due_soon", background="#fff3cd")
-        self.tree.tag_configure("ok", background="#e7f5ff")
+        self.tree.tag_configure("overdue", background="#f2b8b5")
+        self.tree.tag_configure("due_soon", background="#ffe08a")
+        self.tree.tag_configure("ok", background="#b7e3b0")
 
         self._build_empty_state()
 
@@ -287,11 +282,20 @@ class EpidemiologistTracker(tk.Tk):
         for person, records in records_by_person.items():
             parent_id = f"person:{person}"
             person_nodes[person] = parent_id
+            note_text = next((record.notes for record in records if record.notes), "-")
+            overdue_count = 0
+            due_soon_count = 0
+            for record in records:
+                today = date.today()
+                if record.due_date < today:
+                    overdue_count += 1
+                elif record.due_date <= today + timedelta(days=DUE_SOON_DAYS):
+                    due_soon_count += 1
             self.tree.insert(
                 "",
                 tk.END,
                 iid=parent_id,
-                text=person,
+                text=f"{person} (просрочено: {overdue_count}, скоро: {due_soon_count})",
                 values=("", "", "", ""),
             )
             self.tree.insert(
@@ -299,7 +303,7 @@ class EpidemiologistTracker(tk.Tk):
                 tk.END,
                 iid=f"header:{person}",
                 text="",
-                values=("Название", "Срок до", "Статус", "Примечание"),
+                values=("Название", "Срок до", "Статус", note_text),
             )
 
             latest_by_item: dict[str, Record] = {}
@@ -316,7 +320,7 @@ class EpidemiologistTracker(tk.Tk):
                 if record:
                     status_label, tag = self._status_for(record.due_date)
                     due_date_text = record.due_date.strftime("%d.%m.%Y")
-                    notes = record.notes or "-"
+                    notes = "-"
                     iid = f"record:{record.record_id}"
                 else:
                     status_label = "-"
@@ -350,12 +354,12 @@ class EpidemiologistTracker(tk.Tk):
                         item_name,
                         record.due_date.strftime("%d.%m.%Y"),
                         status_label,
-                        record.notes or "-",
+                        "-",
                     ),
                     tags=(tag,),
                 )
 
-            self.tree.item(parent_id, open=True)
+            self.tree.item(parent_id, open=False)
 
     def _toggle_person_sort(self) -> None:
         self._sort_ascending = not self._sort_ascending
@@ -368,9 +372,11 @@ class EpidemiologistTracker(tk.Tk):
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
         if due_date < today:
-            return "Просрочено", "overdue"
-        if due_date <= today + timedelta(days=DUE_SOON_DAYS):
-            return f"Скоро истекает ({DUE_SOON_DAYS} дн.)", "due_soon"
+            days_overdue = (today - due_date).days
+            return f"Просрочено ({days_overdue} дн.)", "overdue"
+        days_left = (due_date - today).days
+        if days_left <= DUE_SOON_DAYS:
+            return f"Скоро истекает ({days_left} дн.)", "due_soon"
         return "В норме", "ok"
 
     def _open_add_dialog(self) -> None:
@@ -666,15 +672,18 @@ class EditAllDialog(tk.Toplevel):
         )
 
         cursor = self.parent.connection.execute(
-            "SELECT item, due_date FROM records WHERE person = ?",
+            "SELECT item, due_date, notes FROM records WHERE person = ?",
             (self.person,),
         )
         latest_dates: dict[str, date] = {}
-        for item, due_date in cursor.fetchall():
+        note_text = "-"
+        for item, due_date, notes in cursor.fetchall():
             parsed = date.fromisoformat(due_date)
             existing = latest_dates.get(item)
             if existing is None or parsed > existing:
                 latest_dates[item] = parsed
+            if notes and note_text == "-":
+                note_text = notes
 
         for index, (category, item_name) in enumerate(MEDBOOK_ITEMS, start=1):
             ttk.Label(list_frame, text=item_name).grid(
@@ -691,6 +700,8 @@ class EditAllDialog(tk.Toplevel):
 
         ttk.Label(frame, text="Примечание").grid(row=3, column=0, sticky=tk.W, pady=(8, 0))
         self.notes_var = tk.StringVar()
+        if note_text != "-":
+            self.notes_var.set(note_text)
         ttk.Entry(frame, textvariable=self.notes_var, width=50).grid(
             row=4, column=0, columnspan=3, sticky=tk.W
         )
