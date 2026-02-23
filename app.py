@@ -243,7 +243,7 @@ class EpidemiologistTracker(tk.Tk):
 
         self.tree.tag_configure("overdue", background="#f2b8b5")
         self.tree.tag_configure("due_soon", background="#ffe08a")
-        self.tree.tag_configure("ok", background="#b7e3b0")
+        self.tree.tag_configure("ok", background="#e7f5ff")
 
         self._build_empty_state()
 
@@ -291,12 +291,24 @@ class EpidemiologistTracker(tk.Tk):
                     overdue_count += 1
                 elif record.due_date <= today + timedelta(days=DUE_SOON_DAYS):
                     due_soon_count += 1
+            status_text = f"Просрочено: {overdue_count}" if overdue_count else "-"
+            due_soon_text = (
+                f"Подходит срок ревакцинации: {due_soon_count}"
+                if due_soon_count
+                else "-"
+            )
+            person_tag = ""
+            if overdue_count:
+                person_tag = "overdue"
+            elif due_soon_count:
+                person_tag = "due_soon"
             self.tree.insert(
                 "",
                 tk.END,
                 iid=parent_id,
-                text=f"{person} (просрочено: {overdue_count}, скоро: {due_soon_count})",
-                values=("", "", "", ""),
+                text=person,
+                values=("", "", status_text, due_soon_text),
+                tags=(person_tag,) if person_tag else (),
             )
             self.tree.insert(
                 parent_id,
@@ -376,7 +388,7 @@ class EpidemiologistTracker(tk.Tk):
             return f"Просрочено ({days_overdue} дн.)", "overdue"
         days_left = (due_date - today).days
         if days_left <= DUE_SOON_DAYS:
-            return f"Скоро истекает ({days_left} дн.)", "due_soon"
+            return f"Подходит срок ревакцинации ({days_left} дн.)", "due_soon"
         return "В норме", "ok"
 
     def _open_add_dialog(self) -> None:
