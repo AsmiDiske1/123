@@ -146,6 +146,7 @@ class EpidemiologistTracker(tk.Tk):
         self._seed_if_empty()
 
         self._sort_ascending = True
+        self._last_clicked_item: str | None = None
         self._build_ui()
         self._load_records()
 
@@ -224,6 +225,7 @@ class EpidemiologistTracker(tk.Tk):
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
         self.tree.bind("<Button-1>", self._handle_tree_click, add="+")
+        self.tree.bind("<<TreeviewSelect>>", self._clear_tree_selection, add="+")
 
         self.tree.heading(
             "#0",
@@ -238,7 +240,7 @@ class EpidemiologistTracker(tk.Tk):
         self.tree.column("#0", width=180)
         self.tree.column("item", width=200)
         self.tree.column("due_date", width=100, anchor=tk.CENTER)
-        self.tree.column("status", width=140, anchor=tk.CENTER)
+        self.tree.column("status", width=240, anchor=tk.CENTER)
         self.tree.column("notes", width=220)
 
         self.tree.tag_configure("overdue", background="#f2b8b5")
@@ -378,8 +380,13 @@ class EpidemiologistTracker(tk.Tk):
         self._load_records()
 
     def _handle_tree_click(self, event: tk.Event) -> None:
-        if not self.tree.identify_row(event.y):
+        clicked = self.tree.identify_row(event.y)
+        self._last_clicked_item = clicked or None
+        if not clicked:
             self.tree.selection_remove(self.tree.selection())
+
+    def _clear_tree_selection(self, _: tk.Event) -> None:
+        self.tree.selection_remove(self.tree.selection())
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
@@ -474,6 +481,34 @@ class EpidemiologistTracker(tk.Tk):
             )
         self._load_records()
 
+    def _replace_records(self, person: str, payloads: list["RecordInput"]) -> None:
+        if not payloads:
+            return
+        items = [payload.item for payload in payloads]
+        placeholders = ",".join("?" for _ in items)
+        with self.connection:
+            self.connection.execute(
+                f"DELETE FROM records WHERE person = ? AND item IN ({placeholders})",
+                [person, *items],
+            )
+            self.connection.executemany(
+                """
+                INSERT INTO records (person, item, category, due_date, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        payload.person,
+                        payload.item,
+                        payload.category,
+                        payload.due_date,
+                        payload.notes,
+                    )
+                    for payload in payloads
+                ],
+            )
+        self._load_records()
+
     def _open_edit_dialog(self) -> None:
         person = self._selected_person()
         if not person:
@@ -515,9 +550,9 @@ class EpidemiologistTracker(tk.Tk):
 
     def _selected_record_id(self) -> int | None:
         selection = self.tree.selection()
-        if not selection:
+        selected = selection[0] if selection else self._last_clicked_item
+        if not selected:
             return None
-        selected = selection[0]
         if selected.startswith("person:") or selected.startswith("header:"):
             return None
         if selected.startswith("record:"):
@@ -526,9 +561,9 @@ class EpidemiologistTracker(tk.Tk):
 
     def _selected_person(self) -> str | None:
         selection = self.tree.selection()
-        if not selection:
+        selected = selection[0] if selection else self._last_clicked_item
+        if not selected:
             return None
-        selected = selection[0]
         if selected.startswith("person:"):
             return selected.split("person:", 1)[1]
         if selected.startswith("record:"):
@@ -651,7 +686,7 @@ class AddDialog(tk.Toplevel):
                 "Проверка", "Заполните хотя бы одну дату для добавления."
             )
             return
-        self.parent._insert_records(payloads)
+        self.parent._replace_records(self.person, payloads)
         self.destroy()
 
 
