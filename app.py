@@ -227,7 +227,6 @@ class EpidemiologistTracker(tk.Tk):
         )
         self.tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=(4, 8))
         self.tree.bind("<Button-1>", self._handle_tree_click, add="+")
-        self.tree.bind("<<TreeviewSelect>>", self._clear_tree_selection, add="+")
 
         self.tree.heading(
             "#0",
@@ -386,9 +385,6 @@ class EpidemiologistTracker(tk.Tk):
         self._last_clicked_item = clicked or None
         if not clicked:
             self.tree.selection_remove(self.tree.selection())
-
-    def _clear_tree_selection(self, _: tk.Event) -> None:
-        self.tree.selection_remove(self.tree.selection())
 
     def _status_for(self, due_date: date) -> tuple[str, str]:
         today = date.today()
@@ -697,7 +693,7 @@ class AddDialog(tk.Toplevel):
                 "Проверка", "Заполните хотя бы одну дату для добавления."
             )
             return
-        self.parent._replace_records(self.person, payloads)
+        self.parent._replace_records(person, payloads)
         self.destroy()
 
 
