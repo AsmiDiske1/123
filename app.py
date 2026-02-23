@@ -171,9 +171,11 @@ class EpidemiologistTracker(tk.Tk):
             return
         today = date.today()
         samples = []
-        for idx, (category, item) in enumerate(MEDBOOK_ITEMS):
-            due_date = today + timedelta(days=15 + idx * 10)
-            samples.append(("Иванов И.И.", item, category, due_date))
+        people = ["Иванов И.И.", "Петрова А.С.", "Сидоров П.Н."]
+        for person_index, person in enumerate(people):
+            for idx, (category, item) in enumerate(MEDBOOK_ITEMS):
+                due_date = today + timedelta(days=15 + (idx + person_index) * 10)
+                samples.append((person, item, category, due_date))
         with self.connection:
             self.connection.executemany(
                 """
@@ -484,12 +486,10 @@ class EpidemiologistTracker(tk.Tk):
     def _replace_records(self, person: str, payloads: list["RecordInput"]) -> None:
         if not payloads:
             return
-        items = [payload.item for payload in payloads]
-        placeholders = ",".join("?" for _ in items)
         with self.connection:
             self.connection.execute(
-                f"DELETE FROM records WHERE person = ? AND item IN ({placeholders})",
-                [person, *items],
+                "DELETE FROM records WHERE person = ?",
+                (person,),
             )
             self.connection.executemany(
                 """
@@ -536,7 +536,18 @@ class EpidemiologistTracker(tk.Tk):
         self._load_records()
 
     def _delete_record(self) -> None:
+        person = self._selected_person()
         record_id = self._selected_record_id()
+        if person and record_id is None:
+            if not messagebox.askyesno(
+                "Подтверждение",
+                f"Удалить все записи сотрудника «{person}»?",
+            ):
+                return
+            with self.connection:
+                self.connection.execute("DELETE FROM records WHERE person = ?", (person,))
+            self._load_records()
+            return
         if record_id is None:
             messagebox.showinfo("Выбор записи", "Выберите запись для удаления.")
             return
