@@ -143,6 +143,7 @@ class EpidemiologistTracker(tk.Tk):
 
         self.connection = sqlite3.connect(DB_PATH)
         self._init_db()
+        self._seed_if_empty()
 
         self._sort_ascending = True
         self._build_ui()
@@ -161,6 +162,32 @@ class EpidemiologistTracker(tk.Tk):
                     notes TEXT
                 )
                 """
+            )
+
+    def _seed_if_empty(self) -> None:
+        cursor = self.connection.execute("SELECT COUNT(*) FROM records")
+        if cursor.fetchone()[0]:
+            return
+        today = date.today()
+        samples = [
+            ("Иванов И.И.", "Корь", "Прививка", today.replace(year=today.year + 1)),
+            (
+                "Иванов И.И.",
+                "ФЛГ (флюорография)",
+                "Исследование",
+                today.replace(year=today.year + 1),
+            ),
+        ]
+        with self.connection:
+            self.connection.executemany(
+                """
+                INSERT INTO records (person, item, category, due_date, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (person, item, category, due_date.isoformat(), "пример")
+                    for person, item, category, due_date in samples
+                ],
             )
 
     def _build_ui(self) -> None:
